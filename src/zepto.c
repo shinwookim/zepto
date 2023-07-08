@@ -10,6 +10,13 @@
 #include <errno.h>
 
 /******************************************************************************
+ * DEFINE                                                                     *
+ *****************************************************************************/
+#define CTRL_KEY(k) ((k)&0x1f)
+#define CUP "\x1b[H"       // Cursor Position
+#define TERM_CLS "\x1b[2J" // Escape Character
+
+/******************************************************************************
  * DATA                                                                       *
  *****************************************************************************/
 struct termios term_bak; // termios backup used restore terminal to on exit
@@ -18,12 +25,19 @@ struct termios term_bak; // termios backup used restore terminal to on exit
  * CODE                                                                       *
  *****************************************************************************/
 
+void editorClearScreen()
+{
+    write(STDOUT_FILENO, TERM_CLS, 4);
+    write(STDOUT_FILENO, CUP, 3);
+}
+
 /**
  * @brief prints error message and terminates
  * @param cause - string containing a brief error message
  */
 void exception(const char *cause)
 {
+    editorClearScreen();
     perror(cause);
     exit(EXIT_FAILURE);
 }
@@ -61,6 +75,37 @@ void enable_raw_mode()
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1)
         exception("tcsetattr");
 }
+/**
+ * @brief wait for one key press and return
+ * @return key that was pressed
+ * @throw exception on fail to read
+ */
+char editorReadKey()
+{
+    int nread;
+    char c;
+    while ((nread = read(STDIN_FILENO, &c, 1)) != 1)
+    {
+        if (nread == -1 && errno != EAGAIN)
+            exception("read");
+    }
+    return c;
+}
+
+/**
+ * @brief wait for key press and handle
+ */
+void editorProcessKeypress()
+{
+    char c = editorReadKey();
+    switch (c)
+    {
+    case CTRL_KEY('q'):
+        editorClearScreen();
+        exit(0);
+        break;
+    }
+}
 
 int main(void)
 {
@@ -68,14 +113,8 @@ int main(void)
     char c = '\0';
     while (true)
     {
-        if (read(STDIN_FILENO, &c, 1) == -1 && errno != EAGAIN)
-            exception("read");
-        if (iscntrl(c))          // checks if c is a control character
-            printf("%d\r\n", c); // print ASCII number
-        else                     // else prints ASCII number and character
-            printf("%d ('%c')\r\n", c, c);
-        if (c == 'q')
-            break;
+        editorClearScreen();
+        editorProcessKeypress();
     }
     return 0;
 }
