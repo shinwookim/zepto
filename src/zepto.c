@@ -19,6 +19,14 @@
 #define CUP "\x1b[H"       // Cursor Position
 #define TERM_CLS "\x1b[2J" // Escape Character
 #define ERASE_IN_LINE "\x1b[K"
+
+enum editorKey
+{
+    ARROW_LEFT = 1000, // choose a representation that is outside normal ASCII
+    ARROW_RIGHT,
+    ARROW_UP,
+    ARROW_DOWN
+};
 /******************************************************************************
  * DATA                                                                       *
  *****************************************************************************/
@@ -84,7 +92,7 @@ void enable_raw_mode()
  * @return key that was pressed
  * @throw exception on fail to read
  */
-char editor_read_key()
+int editor_read_key()
 {
     int nread;
     char c;
@@ -92,6 +100,27 @@ char editor_read_key()
     {
         if (nread == -1 && errno != EAGAIN)
             exception("read");
+    }
+    if (c == '\x1b') // check for escape characters
+    {
+        char seq[3];
+        if ((read(STDIN_FILENO, &seq[0], 1) != 1) || (read(STDIN_FILENO, &seq[1], 1) != 1))
+            return '\x1b'; // user entered ESC
+        if (seq[0] == '[')
+        {
+            switch (seq[1])
+            {
+            case 'A':
+                return ARROW_UP;
+            case 'B':
+                return ARROW_DOWN;
+            case 'C':
+                return ARROW_RIGHT;
+            case 'D':
+                return ARROW_LEFT;
+            }
+        }
+        return '\x1b';
     }
     return c;
 }
@@ -216,20 +245,20 @@ void editor_refresh_screen()
  * INPUT                                                                      *
  *****************************************************************************/
 
-void editor_move_cursor(char key)
+void editor_move_cursor(int key)
 {
     switch (key)
     {
-    case 'a':
+    case ARROW_LEFT:
         E.cx--;
         break;
-    case 'd':
+    case ARROW_RIGHT:
         E.cx++;
         break;
-    case 'w':
+    case ARROW_UP:
         E.cy--;
         break;
-    case 's':
+    case ARROW_DOWN:
         E.cy++;
         break;
     }
@@ -239,7 +268,7 @@ void editor_move_cursor(char key)
  */
 void editor_process_keypress()
 {
-    char c = editor_read_key();
+    int c = editor_read_key();
     switch (c)
     {
     case CTRL_KEY('q'):
@@ -247,10 +276,10 @@ void editor_process_keypress()
         write(STDOUT_FILENO, CUP, 3);
         exit(0);
         break;
-    case 'w':
-    case 's':
-    case 'a':
-    case 'd':
+    case ARROW_UP:
+    case ARROW_DOWN:
+    case ARROW_LEFT:
+    case ARROW_RIGHT:
         editor_move_cursor(c);
         break;
     }
