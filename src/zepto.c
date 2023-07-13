@@ -1,6 +1,10 @@
 /******************************************************************************
  * INCLUDES                                                                   *
  *****************************************************************************/
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+#define _GNU_SOURCE
+
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,6 +14,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <sys/ioctl.h>
+#include <sys/types.h>
 
 /******************************************************************************
  * DEFINES                                                                    *
@@ -35,12 +40,19 @@ enum editorKey
 /******************************************************************************
  * DATA                                                                       *
  *****************************************************************************/
+typedef struct erow
+{
+    int size;
+    char *chars;
+} erow; // editor row
 struct editorConfig
 {
     int cx, cy;
     int screenrows;
     int screencols;
     struct termios term_bak; // termios backup used restore terminal to on exit
+    int numrows;
+    erow *row;
 };
 struct editorConfig E;
 
@@ -211,7 +223,41 @@ int get_terminal_size(int *numRow, int *numCol)
         return 0; // sucess
     }
 }
+/******************************************************************************
+ * ROW OPERATIONS                                                             *
+ *****************************************************************************/
 
+void editorAppendRow(char *s, size_t len)
+{
+    E.row = realloc(E.row, sizeof(erow) * (E.numrows + 1));
+    int at = E.numrows;
+    E.row[at].size = len;
+    E.row[at].chars = malloc(len + 1);
+    memcpy(E.row[at].chars, s, len);
+    E.row[at].chars[len] = '\0';
+    E.numrows++;
+}
+/******************************************************************************
+ * FILE I/O                                                                   *
+ *****************************************************************************/
+
+void editor_open(char *filename)
+{
+    FILE *fp = fopen(filename, "r");
+    if (!fp)
+        exception("fopen");
+    char *line = NULL;
+    size_t linecap = 0;
+    ssize_t linelen;
+    while ((linelen = getline(&line, &linecap, fp)) != -1)
+    {
+        while (linelen > 0 && (line[linelen - 1] == '\n' || line[linelen - 1] == '\r'))
+            linelen--;
+        editorAppendRow(line, linelen);
+    }
+    free(line);
+    fclose(fp);
+}
 /******************************************************************************
  * APPEND BUFFER                                                              *
  *****************************************************************************/
@@ -247,28 +293,38 @@ void editor_draw_rows(struct appendBuffer *ab)
     int y;
     for (y = 0; y < E.screenrows; y++)
     {
-        if (y == E.screenrows / 3)
+        if (y >= E.numrows)
         {
-            char welcome[80];
-            int welcomelen = snprintf(welcome,
-                                      sizeof(welcome), "Zepto editor -- version %s", ZEPTO_VERSION);
-            if (welcomelen > E.screencols)
-                welcomelen = E.screencols;
-            int padding = (E.screencols - welcomelen) / 2;
-            if (padding)
+            if (!E.numrows && y == E.screenrows / 3)
+            {
+                char welcome[80];
+                int welcomelen = snprintf(welcome,
+                                          sizeof(welcome), "Zepto editor -- version %s", ZEPTO_VERSION);
+                if (welcomelen > E.screencols)
+                    welcomelen = E.screencols;
+                int padding = (E.screencols - welcomelen) / 2;
+                if (padding)
+                {
+                    ab_append(ab, "~", 1);
+                    padding--;
+                }
+                while (padding--)
+                    ab_append(ab, " ", 1);
+                ab_append(ab, welcome, welcomelen);
+            }
+            else
             {
                 ab_append(ab, "~", 1);
-                padding--;
             }
-            while (padding--)
-                ab_append(ab, " ", 1);
-            ab_append(ab, welcome, welcomelen);
         }
         else
         {
-            ab_append(ab, "~", 1);
+            int len = E.row[y].size;
+            if (len > E.screencols)
+                len = E.screencols;
+            ab_append(ab, E.row[y].chars, len);
         }
-        ab_append(ab, ERASE_IN_LINE, 4);
+        ab_append(ab, ERASE_IN_LINE, 3);
         if (y < E.screenrows - 1)
             ab_append(ab, "\r\n", 2);
     }
@@ -353,6 +409,9 @@ int initialize_editor()
 {
     E.cx = 0;
     E.cy = 0;
+    E.numrows = 0;
+    E.row = NULL;
+
     if (get_terminal_size(&E.screenrows, &E.screencols) == -1)
     {
         exception("get_terminal_size");
@@ -361,10 +420,14 @@ int initialize_editor()
     return 1;
 }
 
-int main(void)
+int main(int argc, char *argv[])
 {
     enable_raw_mode();
     initialize_editor();
+    if (argc >= 2)
+    {
+        editor_open(argv[1]);
+    }
     char c = '\0';
     while (true)
     {
